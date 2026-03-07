@@ -1,0 +1,135 @@
+name: AlgoLaser DKM1
+board: ESP32-S3R8
+meta: AlgoLaser DKM1 10W - ESP32-S3R8 - FluidNC
+
+stepping:
+  engine: RMT
+  idle_ms: 255
+  pulse_us: 4
+  dir_delay_us: 1
+  disable_delay_us: 0
+  segments: 12
+
+axes:
+  shared_stepper_disable_pin: gpio.15:low
+  shared_stepper_reset_pin: NO_PIN
+  homing_runs: 1
+
+  x:
+    steps_per_mm: 80.000
+    max_rate_mm_per_min: 10000.000
+    acceleration_mm_per_sec2: 500.000
+    max_travel_mm: 400.000
+    soft_limits: false
+    homing:
+      cycle: 2
+      positive_direction: false
+      mpos_mm: 0.000
+      feed_mm_per_min: 500.000
+      seek_mm_per_min: 2000.000
+      settle_ms: 250
+      seek_scaler: 1.100
+      feed_scaler: 1.100
+    motor0:
+      limit_neg_pin: gpio.18:low:pu
+      limit_pos_pin: NO_PIN
+      limit_all_pin: NO_PIN
+      hard_limits: true
+      pulloff_mm: 2.000
+      standard_stepper:
+        step_pin: gpio.6
+        direction_pin: gpio.7
+
+  y:
+    steps_per_mm: 80.000
+    max_rate_mm_per_min: 10000.000
+    acceleration_mm_per_sec2: 500.000
+    max_travel_mm: 410.000
+    soft_limits: false
+    homing:
+      cycle: 2
+      positive_direction: false
+      mpos_mm: 0.000
+      feed_mm_per_min: 500.000
+      seek_mm_per_min: 2000.000
+      settle_ms: 250
+      seek_scaler: 1.100
+      feed_scaler: 1.100
+    motor0:
+      limit_neg_pin: gpio.8:low:pu
+      limit_pos_pin: NO_PIN
+      limit_all_pin: NO_PIN
+      hard_limits: true
+      pulloff_mm: 2.000
+      standard_stepper:
+        step_pin: gpio.16
+        direction_pin: gpio.17
+
+
+Laser:
+  pwm_hz: 5000
+  output_pin: gpio.47
+  enable_pin: gpio.48:low
+  disable_with_s0: true
+  s0_with_disable: true
+  tool_num: 0
+  speed_map: 0=0.000% 1000=100.000%
+  off_on_alarm: true
+
+user_outputs:
+  digital0_pin: gpio.5
+
+coolant:
+  flood_pin: gpio.4   # M8/M9 tracking — nessun collegamento fisico necessario
+  mist_pin: NO_PIN
+  delay_ms: 0
+
+control:
+  safety_door_pin: NO_PIN
+  reset_pin: gpio.46:low:pu
+  feed_hold_pin: NO_PIN
+  cycle_start_pin: NO_PIN
+  macro0_pin: NO_PIN
+  macro1_pin: NO_PIN
+  macro2_pin: NO_PIN
+  macro3_pin: NO_PIN
+
+probe:
+  pin: NO_PIN
+  check_mode_start: true
+  hard_stop: false
+
+macros:
+  startup_line0:
+  startup_line1:
+  after_reset: M64P0
+  after_homing: M64P0
+  Macro0:
+  Macro1:
+  Macro2:
+  Macro3:
+
+start:
+  must_home: false
+  deactivate_parking: false
+  check_limits: false
+
+parking:
+  enable: false
+
+spi:
+  miso_pin: NO_PIN
+  mosi_pin: NO_PIN
+  sck_pin: NO_PIN
+
+sdcard:
+  cs_pin: NO_PIN
+  card_detect_pin: NO_PIN
+
+arc_tolerance_mm: 0.002
+junction_deviation_mm: 0.010
+verbose_errors: true
+report_inches: false
+enable_parking_override_control: false
+use_line_numbers: false
+planner_blocks: 16
