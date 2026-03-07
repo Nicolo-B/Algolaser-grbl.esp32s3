@@ -14,6 +14,13 @@ const char* WIFI_PASS    = "[BV142rd]";
 const char* FLUIDNC_IP   = "192.168.1.23";
 const int   FLUIDNC_PORT = 80;
 
+// IP statico Arduino Uno R4 WiFi
+// WiFi.config(ip, dns, gateway, subnet)
+IPAddress STATIC_IP(192, 168, 1, 24);
+IPAddress DNS(192, 168, 1, 1);
+IPAddress GATEWAY(192, 168, 1, 1);
+IPAddress SUBNET(255, 255, 255, 0);
+
 // ==================== STATO ========================
 enum MachineMode { PAUSA_MODE, LAVORO_MODE };
 MachineMode currentMode = PAUSA_MODE;
@@ -72,6 +79,7 @@ void loop() {
 void connectWiFi() {
   Serial.print("Connessione WiFi a ");
   Serial.print(WIFI_SSID);
+  WiFi.config(STATIC_IP, DNS, GATEWAY, SUBNET);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
@@ -88,12 +96,13 @@ void connectWiFi() {
 }
 
 // ==================== POLLING FLUIDNC ==============
-// Polling HTTP ogni 100ms.
-// FluidNC risponde con: <Idle|MPos:...|A:F> dove A:F = flood coolant ON (M8).
-// Senza campo A: = coolant spento (M9/pausa).
+// Polling Telnet (porta 23) ogni 500ms.
+// Invia "$G" e legge il modal state GCode.
+// M8 nel modal state = flood coolant ON, M9 = coolant spento.
+// Non richiede WebSocket aperto nel browser.
 void handleFluidNC() {
   static unsigned long lastPoll = 0;
-  if (millis() - lastPoll < 100) return;
+  if (millis() - lastPoll < 500) return;
   lastPoll = millis();
 
   // Riconnetti WiFi se caduto
@@ -104,30 +113,25 @@ void handleFluidNC() {
   }
 
   WiFiClient client;
-  if (!client.connect(FLUIDNC_IP, FLUIDNC_PORT)) return;
+  if (!client.connect(FLUIDNC_IP, 23)) return;  // Telnet port
 
-  // Richiesta status FluidNC
-  client.print(F("GET /command?commandText=? HTTP/1.1\r\n"
-                 "Host: 192.168.1.23\r\n"
-                 "Connection: close\r\n\r\n"));
+  client.print("$G\n");
 
-  // Leggi risposta con timeout 300ms
+  // Leggi risposta con timeout 400ms
   unsigned long t = millis();
   String response = "";
-  while (millis() - t < 300) {
+  while (millis() - t < 400) {
     while (client.available()) {
       response += (char)client.read();
     }
-    if (response.indexOf('\n') > 0 && !client.available()) break;
+    if (response.indexOf("ok") >= 0) break;
   }
   client.stop();
 
   if (response.length() == 0) return;
 
-  // Rileva coolant:
-  // FluidNC status: <Run|MPos:...|A:F>  → flood ON = M8 attivo
-  // Nessun campo A: → coolant spento = M9/pausa
-  bool coolantOn = (response.indexOf("|A:F") >= 0 || response.indexOf("|A:FM") >= 0);
+  // [GC:... M8 ...] = flood ON, [GC:... M9 ...] = flood OFF
+  bool coolantOn = (response.indexOf(" M8 ") >= 0 || response.indexOf(" M8]") >= 0);
 
   if (coolantOn != lastCoolantOn) {
     lastCoolantOn = coolantOn;
