@@ -131,7 +131,13 @@ void handleFluidNC() {
   if (response.length() == 0) return;
 
   // [GC:... M8 ...] = flood ON, [GC:... M9 ...] = flood OFF
-  bool coolantOn = (response.indexOf(" M8 ") >= 0 || response.indexOf(" M8]") >= 0);
+  bool hasM8 = (response.indexOf(" M8 ") >= 0 || response.indexOf(" M8]") >= 0);
+  bool hasM9 = (response.indexOf(" M9 ") >= 0 || response.indexOf(" M9]") >= 0);
+
+  // Ignora risposta se non contiene né M8 né M9 (es. errore, alarm)
+  if (!hasM8 && !hasM9) return;
+
+  bool coolantOn = hasM8;
 
   if (coolantOn != lastCoolantOn) {
     lastCoolantOn = coolantOn;
