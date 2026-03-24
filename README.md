@@ -1,14 +1,13 @@
-# AlgoLaser DKM1 — FluidNC su ESP32-S3R8
+# AlgoLaser DKM1 — Controller Periferiche con Arduino Uno R4 WiFi
 
 ## Stato del progetto
 
 | Componente | Stato |
 |------------|-------|
-| FluidNC su ESP32-S3 (IP fisso `192.168.1.23`) | ✅ Operativo |
-| WebUI FluidNC (ESP3D) | ✅ Operativa |
-| Rilevamento M8/M9 via Telnet | ✅ Funzionante |
-| Arduino Uno R4 WiFi controller periferiche | ✅ Sketch pronto |
-| GPIO5 Power Control (avvio stepper/PSU) | ✅ Configurato via macro |
+| Firmware laser | AlgoLaser GrblHAL 1.1f (originale) |
+| WiFi laser (AP mode) | ALDKM1_AP_9F60 @ 192.168.5.1 |
+| Rilevamento stato lavoro via Telnet | Operativo |
+| Arduino Uno R4 WiFi controller periferiche | Sketch v6 pronto |
 
 ---
 
@@ -17,14 +16,11 @@
 | Componente | Dettaglio |
 |------------|-----------|
 | MCU laser | ESP32-S3R8 (240 MHz, 8 MB PSRAM) |
-| Flash | 8 MB |
-| Firmware | FluidNC v4.x (YAML config) |
-| IP statico | `192.168.1.23` |
-| Controller periferiche | Arduino Uno R4 WiFi — IP `192.168.1.24` |
-| Laser | PWM su GPIO47, enable GPIO48 |
-| Assi | X (GPIO6/7, limit GPIO18) — Y (GPIO16/17, limit GPIO8) |
-| Stepper disable | GPIO15 |
-| Power control | GPIO5 (OUTPUT HIGH — via macro `M64P0`) |
+| Firmware | AlgoLaser GrblHAL 1.1f (AL_DKM1_G1_119) |
+| WiFi laser | AP mode — SSID: `ALDKM1_AP_9F60` — Password: `12345678` |
+| IP laser (AP) | `192.168.5.1` |
+| Telnet laser | porta `23` |
+| Controller periferiche | Arduino Uno R4 WiFi |
 
 ---
 
@@ -32,12 +28,13 @@
 
 ```
 LightBurn
-    │  G-code (M8/M9, G0/G1, S, ecc.)
+    │  G-code via USB (COM5)
     ▼
-FluidNC (ESP32-S3 @ 192.168.1.23)
-    │  Telnet port 23 — $G modal state
+AlgoLaser GrblHAL (ESP32-S3)
+    │  WiFi AP: ALDKM1_AP_9F60 @ 192.168.5.1
+    │  Telnet port 23 — comando "?"
     ▼
-Arduino Uno R4 WiFi (@ 192.168.1.24)
+Arduino Uno R4 WiFi
     │  polling ogni 500ms
     ├── PIN 11 → Elettrovalvola aria compressa
     ├── PIN 12 → Semaforo
@@ -45,58 +42,58 @@ Arduino Uno R4 WiFi (@ 192.168.1.24)
     └── PIN 7  → LED illuminazione area lavoro
 ```
 
-**Logica di rilevamento M8/M9:**
-- Arduino si connette a FluidNC via Telnet (porta 23), invia `$G`
-- Risposta `[GC:... M8 ...]` → LAVORO (tutte le periferiche ON)
-- Risposta `[GC:... M9 ...]` → PAUSA (periferiche OFF, aspirazione rimane 3 min)
-- Non richiede WebSocket/browser aperto
+**Logica di rilevamento stato:**
+- Arduino si connette all'AP della laser (`ALDKM1_AP_9F60`)
+- Polling ogni 500ms via Telnet (porta 23) con comando `?`
+- Risposta `<Run|...>` → LAVORO (tutte le periferiche ON)
+- Risposta `<Idle|...>` → PAUSA (periferiche OFF, aspirazione rimane 3 min)
+- Nessuna modifica al G-code LightBurn necessaria
+
+---
+
+## Comportamento
+
+### LAVORO (laser in esecuzione)
+- Elettrovalvola aria compressa → **ON**
+- Semaforo → **ON**
+- Aspirazione fumi → **ON**
+- LED area lavoro → **OFF**
+
+### PAUSA (laser ferma)
+- Elettrovalvola → **OFF** immediato
+- Semaforo → **OFF** immediato
+- Aspirazione → **OFF** dopo 3 minuti
+- LED → **ON** (dopo 3 minuti se nessun boost attivo)
 
 ---
 
 ## File nel repository
 
 ```
-fluidnc/
-├── config.yaml               ← Configurazione macchina FluidNC
-└── platformio_override.ini   ← Build PlatformIO per ESP32-S3 (python3 fix)
-
 arduino_controller/
-└── algolaser_controller.ino  ← Sketch Arduino Uno R4 WiFi
+└── algolaser_controller.ino  ← Sketch Arduino Uno R4 WiFi (v6)
+
+fluidnc/
+└── config.yaml               ← Configurazione FluidNC (non più in uso)
 ```
 
 ---
 
-## FluidNC — Note di configurazione
+## Configurazione iniziale laser (dopo ogni power cycle)
 
-### Filesystem SPIFFS
-Il filesystem (LittleFS) contiene:
-- `config.yaml` — configurazione macchina
-- `index.html.gz` — WebUI ESP3D
-- `preferences.json`, `preferences2.json` — preferenze WebUI (vuoti `{}`)
-- `macrocfg.json` — macro WebUI (vuoto `[]`)
+Il firmware AlgoLaser resetta il WiFi mode ad ogni riavvio.
+Per attivare l'AP, dalla console LightBurn inviare:
 
-### Partizioni
-Flash 8 MB: `app3M_spiffs1M_8MB.csv` (firmware 3 MB + SPIFFS 1 MB a `0x610000`)
-
-### GPIO5 — Power Control
-GPIO5 deve restare HIGH per alimentare stepper e PSU laser.
-Configurato tramite `user_outputs: digital0_pin: gpio.5` e macro:
-```yaml
-macros:
-  after_reset: M64P0
-  after_homing: M64P0
+```
+$73=3
+$WRS
 ```
 
-### Telnet FluidNC (porta 23)
-FluidNC espone un'interfaccia Telnet raw sulla porta 23.
-Comandi utili:
-```bash
-echo "?" | nc 192.168.1.23 23      # status report
-echo '$G' | nc 192.168.1.23 23     # modal state GCode
-echo "M8" | nc 192.168.1.23 23     # attiva coolant flood
-echo "M9" | nc 192.168.1.23 23     # disattiva coolant
-echo '$X' | nc 192.168.1.23 23     # sblocca allarme
-```
+Questo mette la laser in modalità AP+Station e attiva il Telnet.
+L'Arduino si riconnetterà automaticamente.
+
+> **Tip**: aggiungere `$73=3` e `$WRS` allo Start GCode di LightBurn
+> (Device Settings → GCode → Start GCode) per automatizzare questo passaggio.
 
 ---
 
@@ -104,33 +101,30 @@ echo '$X' | nc 192.168.1.23 23     # sblocca allarme
 
 | Comando | Funzione |
 |---------|----------|
-| `MODE=MANUAL` | Disabilita polling FluidNC, controllo manuale |
+| `MODE=MANUAL` | Disabilita polling laser, controllo manuale |
 | `MODE=AUTO` | Riabilita polling automatico |
 | `LED=BOOST` | Forza LED ON per 5 minuti |
 | `LED=BOOST_OFF` | Annulla boost LED |
-| `LED=ON` / `LED=OFF` | (solo MANUAL) |
+| `LED=ON` / `LED=OFF` | Controllo LED (solo MANUAL) |
 | `EV=ON` / `EV=OFF` | Elettrovalvola (solo MANUAL) |
 | `ASP=ON` / `ASP=OFF` | Aspirazione (solo MANUAL) |
 | `RESET` | Riavvio Arduino |
 
 ---
 
-## Build e flash FluidNC
+## PIN Arduino
 
-```bash
-cd FluidNC-main
-cp /path/to/platformio_override.ini .
-
-# Flash firmware
-python3 -m platformio run -e wifi_s3 --target upload
-
-# Flash filesystem (config.yaml + WebUI)
-python3 -m platformio run -e wifi_s3 --target uploadfs
-```
+| PIN | Periferica | Logica |
+|-----|------------|--------|
+| 11 | Elettrovalvola aria compressa | HIGH = ON |
+| 12 | Semaforo | HIGH = ON |
+| 8 | Aspirazione fumi | HIGH = ON |
+| 7 | LED area lavoro | HIGH = ON |
 
 ---
 
 ## Riferimenti
 
-- [FluidNC](https://github.com/bdring/FluidNC)
+- [AlgoLaser DKM1](https://algolaser.com)
+- [GrblHAL](https://github.com/grblHAL)
 - [Arduino Uno R4 WiFi — WiFiS3](https://docs.arduino.cc/hardware/uno-r4-wifi/)
