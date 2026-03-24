@@ -7,19 +7,12 @@
 #define LED            7
 
 // ==================== CONFIG =======================
-#define ASPIRAZIONE_DELAY 180000UL  // 3 min dopo PAUSA → spegni aspirazione/LED
+#define ASPIRAZIONE_DELAY 180000UL  // 3 min dopo PAUSA -> spegni aspirazione/LED
 
-const char* WIFI_SSID    = "Balzoni Vittore Internal";
-const char* WIFI_PASS    = "[BV142rd]";
-const char* FLUIDNC_IP   = "192.168.1.23";
-const int   FLUIDNC_PORT = 80;
-
-// IP statico Arduino Uno R4 WiFi
-// WiFi.config(ip, dns, gateway, subnet)
-IPAddress STATIC_IP(192, 168, 1, 24);
-IPAddress DNS(192, 168, 1, 1);
-IPAddress GATEWAY(192, 168, 1, 1);
-IPAddress SUBNET(255, 255, 255, 0);
+const char* WIFI_SSID    = "ALDKM1_AP_9F60";
+const char* WIFI_PASS    = "12345678";
+const char* LASER_IP     = "192.168.5.1";
+const int   LASER_PORT   = 23;
 
 // ==================== STATO ========================
 enum MachineMode { PAUSA_MODE, LAVORO_MODE };
@@ -31,19 +24,17 @@ bool aspirazioneSpenta = false;
 bool ledSpento = false;
 unsigned long ledBoostEnd = 0;
 
-// Stato coolant precedente (per rilevare cambiamenti)
-bool lastCoolantOn = false;
+bool laserRunning = false;
 
 // ==================== PROTOTIPI ====================
 void handleUSB();
-void handleFluidNC();
+void handleLaser();
 void handleTimers();
 void setMachineMode(MachineMode mode);
 void printStatus();
 void sendStatusToPC();
 void connectWiFi();
 
-// Buffer per ricezione comandi USB non-bloccante
 static char usbCmdBuf[64];
 static int  usbCmdLen = 0;
 
@@ -61,7 +52,7 @@ void setup() {
   digitalWrite(ASPIRAZIONE,    LOW);
   digitalWrite(LED,            HIGH);
 
-  Serial.println("=== LASER CONTROLLER v4 (FluidNC) ===");
+  Serial.println("=== LASER CONTROLLER v6 (AlgoLaser GrblHAL) ===");
 
   connectWiFi();
   printStatus();
@@ -70,7 +61,7 @@ void setup() {
 // ==================== LOOP =========================
 void loop() {
   handleUSB();
-  if (!manualMode) handleFluidNC();
+  if (!manualMode) handleLaser();
   if (!manualMode) handleTimers();
   sendStatusToPC();
 }
@@ -79,7 +70,6 @@ void loop() {
 void connectWiFi() {
   Serial.print("Connessione WiFi a ");
   Serial.print(WIFI_SSID);
-  WiFi.config(STATIC_IP, DNS, GATEWAY, SUBNET);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
@@ -88,36 +78,30 @@ void connectWiFi() {
     attempts++;
   }
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.print(" OK → ");
+    Serial.print(" OK -> ");
     Serial.println(WiFi.localIP());
   } else {
-    Serial.println(" FALLITO — riprovo in loop()");
+    Serial.println(" FALLITO - riprovo in loop()");
   }
 }
 
-// ==================== POLLING FLUIDNC ==============
-// Polling Telnet (porta 23) ogni 500ms.
-// Invia "$G" e legge il modal state GCode.
-// M8 nel modal state = flood coolant ON, M9 = coolant spento.
-// Non richiede WebSocket aperto nel browser.
-void handleFluidNC() {
+// ==================== POLLING LASER ================
+void handleLaser() {
   static unsigned long lastPoll = 0;
   if (millis() - lastPoll < 500) return;
   lastPoll = millis();
 
-  // Riconnetti WiFi se caduto
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi perso — riconnessione...");
+    Serial.println("WiFi perso - riconnessione...");
     connectWiFi();
     return;
   }
 
   WiFiClient client;
-  if (!client.connect(FLUIDNC_IP, 23)) return;  // Telnet port
+  if (!client.connect(LASER_IP, LASER_PORT)) return;
 
-  client.print("$G\n");
+  client.print("?\n");
 
-  // Leggi risposta con timeout 400ms
   unsigned long t = millis();
   String response = "";
   while (millis() - t < 400) {
@@ -130,24 +114,19 @@ void handleFluidNC() {
 
   if (response.length() == 0) return;
 
-  // [GC:... M8 ...] = flood ON, [GC:... M9 ...] = flood OFF
-  bool hasM8 = (response.indexOf(" M8 ") >= 0 || response.indexOf(" M8]") >= 0);
-  bool hasM9 = (response.indexOf(" M9 ") >= 0 || response.indexOf(" M9]") >= 0);
+  bool isRunning = response.indexOf("<Run|") >= 0 || response.indexOf("<Run,") >= 0;
+  bool isIdle    = response.indexOf("<Idle|") >= 0 || response.indexOf("<Idle,") >= 0;
 
-  // Ignora risposta se non contiene né M8 né M9 (es. errore, alarm)
-  if (!hasM8 && !hasM9) return;
+  if (!isRunning && !isIdle) return;
 
-  bool coolantOn = hasM8;
-
-  if (coolantOn != lastCoolantOn) {
-    lastCoolantOn = coolantOn;
-    if (coolantOn) {
-      Serial.println(">>> M8 RILEVATO (flood ON) <<<");
-      setMachineMode(LAVORO_MODE);
-    } else {
-      Serial.println(">>> M9 RILEVATO (flood OFF) <<<");
-      setMachineMode(PAUSA_MODE);
-    }
+  if (isRunning && !laserRunning) {
+    laserRunning = true;
+    Serial.println(">>> LASER IN ESECUZIONE <<<");
+    setMachineMode(LAVORO_MODE);
+  } else if (isIdle && laserRunning) {
+    laserRunning = false;
+    Serial.println(">>> LASER FERMA <<<");
+    setMachineMode(PAUSA_MODE);
   }
 }
 
@@ -233,16 +212,15 @@ void setMachineMode(MachineMode mode) {
     if (ledBoostEnd == 0 || millis() >= ledBoostEnd) digitalWrite(LED, LOW);
     aspirazioneSpenta = false;
     ledSpento         = false;
-    Serial.println(">>> STATO MACCHINA: LAVORO (M8) <<<");
+    Serial.println(">>> STATO MACCHINA: LAVORO <<<");
   } else {
     digitalWrite(ELETTROVALVOLA, LOW);
     digitalWrite(SEMAFORO,       LOW);
     if (ledBoostEnd == 0 || millis() >= ledBoostEnd) digitalWrite(LED, HIGH);
-    // ASPIRAZIONE rimane ON → spenta da handleTimers dopo 3 min
     pausaStartTime    = millis();
     aspirazioneSpenta = false;
     ledSpento         = false;
-    Serial.println(">>> STATO MACCHINA: PAUSA (M9) <<<");
+    Serial.println(">>> STATO MACCHINA: PAUSA <<<");
   }
 
   printStatus();
